@@ -1,47 +1,66 @@
--- [[ Скрипт на псевдо-растягивание экрана и интерфейса ]] --
+-- Безопасное ожидание загрузки игры
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
 
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 10)
 local Camera = workspace.CurrentCamera
 
--- 1. Изменяем FOV (Поле зрения), чтобы раздвинуть камеру по бокам
-Camera.FieldOfView = 110 -- Стандартно 70, больше значение = шире обзор
-
--- 2. Функция, которая насильно растягивает элементы интерфейса (UI) по горизонтали
-local function stretchUI(guiObject)
-    if guiObject:IsA("Frame") or guiObject:IsA("ImageLabel") or guiObject:IsA("TextLabel") then
-        -- Берём текущий размер
-        local currentSize = guiObject.Size
-        -- Умножаем ширину на 1.3 (растягиваем по оси X)
-        guiObject.Size = UDim2.new(
-            currentSize.X.Scale * 1.3, 
-            currentSize.X.Offset * 1.3, 
-            currentSize.Y.Scale, 
-            currentSize.Y.Offset
-        )
-    end
+-- Безопасное изменение FOV
+if Camera then
+    Camera.FieldOfView = 115
 end
 
--- Применяем растяг ко всему интерфейсу, который уже есть и который появится
+-- Функция растягивания с защитой от вылетов
+local function safeStretch(guiObject)
+    pcall(function()
+        if guiObject:IsA("Frame") or guiObject:IsA("ImageLabel") or guiObject:IsA("TextLabel") then
+            if not guiObject:GetAttribute("Stretched") then
+                guiObject:SetAttribute("Stretched", true)
+                local s = guiObject.Size
+                guiObject.Size = UDim2.new(s.X.Scale * 1.3, s.X.Offset * 1.3, s.Y.Scale, s.Y.Offset)
+            end
+        end
+    end)
+end
+
+-- Безопасный обход элементов с паузами (чтобы не крашило)
 local function scanGui(gui)
-    for _, child in ipairs(gui:GetDescendants()) do
-        stretchUI(child)
+    local descendants = gui:GetDescendants()
+    for i, child in ipairs(descendants) do
+        safeStretch(child)
+        -- Каждые 50 элементов делаем микро-паузу, чтобы разгрузить процессор
+        if i % 50 == 0 then 
+            task.wait() 
+        end
     end
-    gui.DescendantAdded:Connect(stretchUI)
+    
+    -- Вместо тяжелого DescendantAdded используем легкую задержку для новых элементов
+    gui.ChildAdded:Connect(function(newChild)
+        task.wait(0.2)
+        safeStretch(newChild)
+        for _, subChild in ipairs(newChild:GetDescendants()) do
+            safeStretch(subChild)
+        end
+    end)
 end
 
--- Запуск сканирования UI
-for _, gui in ipairs(PlayerGui:GetChildren()) do
-    if gui:IsA("ScreenGui") then
-        scanGui(gui)
+-- Запуск
+if PlayerGui then
+    for _, gui in ipairs(PlayerGui:GetChildren()) do
+        if gui:IsA("ScreenGui") then
+            task.spawn(scanGui, gui) -- Запуск в отдельном потоке
+        end
     end
+
+    PlayerGui.ChildAdded:Connect(function(child)
+        if child:IsA("ScreenGui") then
+            task.wait(0.5)
+            task.spawn(scanGui, child)
+        end
+    end)
 end
 
-PlayerGui.ChildAdded:Connect(function(child)
-    if child:IsA("ScreenGui") then
-        scanGui(child)
-    end
-end)
-
-print("Lua-растяг (FOV + UI) успешно активирован!")
+print("[Xeno] Безопасный режим растяга активирован.")
